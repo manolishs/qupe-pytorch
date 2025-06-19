@@ -4,6 +4,9 @@ import torch.nn as nn
 import torch.nn.functional as F
 import numpy as np
 
+import pennylane as qml
+from pennylane import numpy as qnp
+from pennylane import QFT
 
 # Misc
 img2mse = lambda x, y : torch.mean((x - y) ** 2)
@@ -11,51 +14,62 @@ mse2psnr = lambda x : -10. * torch.log(x) / torch.log(torch.Tensor([10.]))
 to8b = lambda x : (255*np.clip(x,0,1)).astype(np.uint8)
 
 
+n_qubits = 6
+dev = qml.device('lightning.qubit', wires=n_qubits)
+
+@qml.qnode(dev)
+def encode_qft(p):
+    X = int(p * (2 ** n_qubits))
+    for i in range(n_qubits):
+        if (X >> i) & 1:
+            qml.PauliX(wires=i)
+    qml.QFT(range(n_qubits))
+    return [qml.expval(qml.PauliY(i)) for i in range(n_qubits)]
+
+def encode_scalar(p): 
+    return np.array([x.item() for x in encode_qft(p)])
+
 # Positional encoding (section 5.1)
 class Embedder:
     def __init__(self, **kwargs):
         self.kwargs = kwargs
-        self.create_embedding_fn()
-        
-    def create_embedding_fn(self):
-        embed_fns = []
-        d = self.kwargs['input_dims']
-        out_dim = 0
-        if self.kwargs['include_input']:
-            embed_fns.append(lambda x : x)
-            out_dim += d
-            
-        max_freq = self.kwargs['max_freq_log2']
-        N_freqs = self.kwargs['num_freqs']
-        
-        if self.kwargs['log_sampling']:
-            freq_bands = 2.**torch.linspace(0., max_freq, steps=N_freqs)
-        else:
-            freq_bands = torch.linspace(2.**0., 2.**max_freq, steps=N_freqs)
-            
-        for freq in freq_bands:
-            for p_fn in self.kwargs['periodic_fns']:
-                embed_fns.append(lambda x, p_fn=p_fn, freq=freq : p_fn(x * freq))
-                out_dim += d
-                    
-        self.embed_fns = embed_fns
-        self.out_dim = out_dim
+        self.include_input = kwargs['include_input']
+        self.input_dims = kwargs['input_dims']
+        self.n_qubits = kwargs.get('n_qubits', 6)
+        self.xyz_min = kwargs['xyz_min']
+        self.xyz_max = kwargs['xyz_max']
+        self.out_dim = self.input_dims * (self.n_qubits + (1 if self.include_input else 0))
         
     def embed(self, inputs):
-        return torch.cat([fn(inputs) for fn in self.embed_fns], -1)
+        features = []
+        for i in range(self.input_dims):
+            coord = inputs[..., i]
+            min_v = self.xyz_min[i]
+            max_v = self.xyz_max[i]
+            # normalize
+            coord_norm = (coord - min_v) / (max_v - min_v + 1e-10)
+            coord_norm = torch.clamp(coord_norm, 0.0, 1.0 - 1e-10)
+            # convert to numpy scalar
+            coord_qft = []
+            for p in coord_norm.detach().cpu().numpy():
+                coord_qft.append(encode_scalar(p))
+            coord_qft = torch.tensor(coord_qft, dtype=torch.float32)
+            if self.include_input:
+                coord_qft = torch.cat([coord_norm.unsqueeze(-1), coord_qft], dim=-1)
+            features.append(coord_qft)
+        return torch.cat(features, dim=-1)
 
 
-def get_embedder(multires, i=0):
+def get_embedder(multires, i, xyz_min, xyz_max):
     if i == -1:
         return nn.Identity(), 3
     
     embed_kwargs = {
                 'include_input' : True,
                 'input_dims' : 3,
-                'max_freq_log2' : multires-1,
-                'num_freqs' : multires,
-                'log_sampling' : True,
-                'periodic_fns' : [torch.sin, torch.cos],
+                'n_qubits': 6,
+                'xyz_min': xyz_min.tolist(),
+                'xyz_max': xyz_max.tolist(),
     }
     
     embedder_obj = Embedder(**embed_kwargs)

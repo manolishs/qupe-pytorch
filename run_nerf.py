@@ -18,7 +18,6 @@ from load_deepvoxels import load_dv_data
 from load_blender import load_blender_data
 from load_LINEMOD import load_LINEMOD_data
 
-
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 np.random.seed(0)
 DEBUG = False
@@ -175,10 +174,10 @@ def render_path(render_poses, hwf, K, chunk, render_kwargs, gt_imgs=None, savedi
     return rgbs, disps
 
 
-def create_nerf(args):
+def create_nerf(args, xyz_min, xyz_max):
     """Instantiate NeRF's MLP model.
     """
-    embed_fn, input_ch = get_embedder(args.multires, args.i_embed)
+    embed_fn, input_ch = get_embedder(args.multires, args.i_embed, xyz_min, xyz_max)
 
     input_ch_views = 0
     embeddirs_fn = None
@@ -606,6 +605,11 @@ def train():
     else:
         print('Unknown dataset type', args.dataset_type, 'exiting')
         return
+    
+    # marker for where I added coord min/max positions
+    scene_center = poses[:, :3, 3]
+    xyz_min = scene_center.min(axis=0) - 1.0
+    xyz_max = scene_center.max(axis=0) + 1.0
 
     # Cast intrinsics to right types
     H, W, focal = hwf
@@ -637,7 +641,7 @@ def train():
             file.write(open(args.config, 'r').read())
 
     # Create nerf model
-    render_kwargs_train, render_kwargs_test, start, grad_vars, optimizer = create_nerf(args)
+    render_kwargs_train, render_kwargs_test, start, grad_vars, optimizer = create_nerf(args, xyz_min, xyz_max)
     global_step = start
 
     bds_dict = {
