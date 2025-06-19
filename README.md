@@ -1,8 +1,6 @@
 # QuPE-pytorch: Quantum Positional Encoding for Neural Radiance Fields
 
-This repository tracks my progress along the SenSIP Quantum Machine Learning REU in completing a cutting-edge project in quantum 3D scene reconstruction.
-
-**Abstract:** Recreating 3D photorealistic rendering of real-world scenes has been extensively explored in the domain of computer vision. Classical neural networks' ability to solve differential equations gives them an advantage in training the necessary models for rendering tasks. However, these models often suffer from long training times and inefficient rendering. Quantum computing, as an emerging paradigm in machine learning research, offers the potential to alleviate these bottlenecks in 3D rendering by leveraging its inherent high-dimensional state space and parallelism. We propose a hybrid quantum-classical approach to overcome these challenges posed by classical methods. In our proposed approach, we take advantage of the quantum parallelism to potentially optimize training and rendering.
+This repository tracks my progress along the SenSIP Quantum Machine Learning REU in completing a quantum 3D scene reconstruction project.
 
 Below is the README of the original repo.
 
