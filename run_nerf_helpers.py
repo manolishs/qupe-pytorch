@@ -49,11 +49,12 @@ class Embedder:
             # normalize
             coord_norm = (coord - min_v) / (max_v - min_v + 1e-10)
             coord_norm = torch.clamp(coord_norm, 0.0, 1.0 - 1e-10)
+            print("COORD_NORM SHAPE: ", coord_norm.shape)
             # convert to numpy scalar
             coord_qft = []
             for p in coord_norm.detach().cpu().numpy():
                 coord_qft.append(encode_scalar(p))
-            coord_qft = torch.tensor(coord_qft, dtype=torch.float32)
+            coord_qft = torch.tensor(np.array(coord_qft), dtype=torch.float32)
             if self.include_input:
                 coord_qft = torch.cat([coord_norm.unsqueeze(-1), coord_qft], dim=-1)
             features.append(coord_qft)
