@@ -15,7 +15,7 @@ to8b = lambda x : (255*np.clip(x,0,1)).astype(np.uint8)
 
 
 n_qubits = 6
-dev = qml.device('lightning.gpu', wires=n_qubits)
+dev = qml.device('lightning.qubit', wires=n_qubits)
 
 @qml.batch_input(argnum=0)
 @qml.qnode(dev) 
