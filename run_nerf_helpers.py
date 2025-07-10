@@ -15,50 +15,61 @@ to8b = lambda x : (255*np.clip(x,0,1)).astype(np.uint8)
 
 
 n_qubits = 6
-dev = qml.device('lightning.qubit', wires=n_qubits)
+dev = qml.device('lightning.gpu', wires=n_qubits)
 
-@qml.qnode(dev)
-def encode_qft(p):
-    X = int(p * (2 ** n_qubits))
+@qml.batch_input(argnum=0)
+@qml.qnode(dev) 
+def encode_qft_batch(p_batch): 
+    X_vals = (p_batch * 2**n_qubits).to(int)
     for i in range(n_qubits):
-        if (X >> i) & 1:
-            qml.PauliX(wires=i)
+        qml.PauliX(wires=i, 
+                   control_values=(X_vals >> i) & 1)
     qml.QFT(range(n_qubits))
     return [qml.expval(qml.PauliY(i)) for i in range(n_qubits)]
 
-def encode_scalar(p): 
-    return np.array([x.item() for x in encode_qft(p)])
+# def encode_scalar(p): 
+#     return np.array([x.item() for x in encode_qft_batch(p)])
 
 # Positional encoding (section 5.1)
 class Embedder:
     def __init__(self, **kwargs):
-        self.kwargs = kwargs
         self.include_input = kwargs['include_input']
         self.input_dims = kwargs['input_dims']
         self.n_qubits = kwargs.get('n_qubits', 6)
-        self.xyz_min = kwargs['xyz_min']
-        self.xyz_max = kwargs['xyz_max']
+        self.xyz_min = kwargs['xyz_min', torch.tensor(kwargs['xyz_min'], dtype=torch.float32)]
+        self.xyz_max = kwargs['xyz_max', torch.tensor(kwargs['xyz_max'], dtype=torch.float32)]
         self.out_dim = self.input_dims * (self.n_qubits + (1 if self.include_input else 0))
         
+    @torch.no_grad() 
     def embed(self, inputs):
-        features = []
+        orig_shape = inputs.shape
+        flat = inputs.reshape(-1, self.input_dims)
+
+        xyz_min = self.xyz_min.to(inputs.device)
+        xyz_max = self.xyz_max.to(inputs.device)
+        eps = 1e-10
+        norm = torch.clamp(
+            (flat - xyz_min) / (xyz_max - xyz_min + eps),
+            0.0, 1.0 - eps
+        )
+
+        feats = []
         for i in range(self.input_dims):
-            coord = inputs[..., i]
-            min_v = self.xyz_min[i]
-            max_v = self.xyz_max[i]
-            # normalize
-            coord_norm = (coord - min_v) / (max_v - min_v + 1e-10)
-            coord_norm = torch.clamp(coord_norm, 0.0, 1.0 - 1e-10)
-            print("COORD_NORM SHAPE: ", coord_norm.shape)
-            # convert to numpy scalar
-            coord_qft = []
-            for p in coord_norm.detach().cpu().numpy():
-                coord_qft.append(encode_scalar(p))
-            coord_qft = torch.tensor(np.array(coord_qft), dtype=torch.float32)
-            if self.include_input:
-                coord_qft = torch.cat([coord_norm.unsqueeze(-1), coord_qft], dim=-1)
-            features.append(coord_qft)
-        return torch.cat(features, dim=-1)
+            coord_i = norm[:, i]
+
+            qft_np  = encode_qft_batch(
+                coord_i.detach().cpu().numpy()
+            )
+
+            qft_t   = torch.from_numpy(qft_np).to(inputs.device)
+
+            if self.include_input: 
+                qft_t = torch.cat([coord_i.unsqueeze(-1), qft_t], dim=-1)
+
+            feats.append(qft_t) 
+
+        out = torch.cat(feats, dim=-1) 
+        return out.reshape(*orig_shape[:-1], self.out_dim)
 
 
 def get_embedder(multires, i, xyz_min, xyz_max):
